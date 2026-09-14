@@ -45,7 +45,7 @@ Full reference, one page per noun, under [`docs/`](docs/README.md):
 | contacts | list, get, search, create, update, merge | [contacts](docs/commands/contacts.md) |
 | companies | list, get, create, update | [companies](docs/commands/companies.md) |
 | deals | list, get, create, update, move, won, lost, reopen, convert, merge | [deals](docs/commands/deals.md) |
-| activities | list, get *(read-only)* | [activities](docs/commands/activities.md) |
+| activities | list, get, create, update, delete, done, reopen, add-blocker, remove-blocker, subtask-add, subtask-toggle, subtask-remove, start-timer, stop-timer, log-time, edit-time, remove-time, comment, comments, history | [activities](docs/commands/activities.md) |
 | pipelines | list, get, create, update, delete | [pipelines](docs/commands/pipelines.md) |
 | stages | list, create, update, reorder, delete | [stages](docs/commands/stages.md) |
 | products | list, get, create, update, activate, deactivate, delete | [products](docs/commands/products.md) |
