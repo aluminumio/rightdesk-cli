@@ -43,20 +43,24 @@ Create an activity. `--subject` and `--type` are required.
 | `--description` | notes body |
 | `--location` | location or link |
 | `--due-date` | `YYYY-MM-DD` or ISO8601 |
-| `--has-time` | treat `--due-date` as carrying a time-of-day |
+| `--has-time` / `--no-has-time` | treat `--due-date` as carrying a time-of-day, or clear that |
 | `--duration` | planned duration in minutes |
 | `--chargeable-status` | standard / chargeable / charged |
 | `--assigned-to ID` | assignee user (defaults to you) |
-| `--deal` `--lead` `--contact` `--company` `--customer` `--partner` | the primary link (contact/company are derived server-side) |
-| `--recurring` + `--pattern` + `--interval` + `--recurrence-end` | recurrence (needs `--pattern` and `--due-date`) |
-| `--external-id` | idempotency key — re-creating with the same id upserts, never duplicates |
+| `--deal` `--lead` `--contact` `--customer` `--partner` | the primary link — one only; `contact`/`company` are then derived server-side, so there is no `--company` flag |
+| `--recurring` + `--pattern` + `--interval` + `--recurrence-end` | recurrence (needs `--pattern` and `--due-date`); `--no-recurring` turns it off |
+| `--external-id` | idempotency key — re-creating with the same id upserts, never duplicates (create only; `update` ignores it) |
 
 ```sh
 rd activities create --subject "Call ACME" --type call --deal 52375 --due-date 2026-10-01
 rd activities create --subject "Weekly sync" --type meeting --recurring --pattern weekly --interval 1 --due-date 2026-10-01
 ```
 
-### `rd activities update ID [-j]` — same flags as create (all optional; provide at least one).
+### `rd activities update ID [-j]`
+
+Same flags as create, all optional — provide at least one. Pass a flag an empty value to **clear**
+that field (`--location ""` sends null); omitting a flag leaves the field untouched. `--external-id`
+is ignored here: the idempotency key is fixed at creation.
 
 ### `rd activities delete ID --yes` — **destructive**, requires `--yes`.
 
@@ -68,7 +72,7 @@ Mark complete / reopen. Completing a recurring activity spawns its next occurren
 ```sh
 rd activities subtask-add 43240 --text "Draft agenda"
 rd activities subtask-toggle 43240 --index 0     # flip done state
-rd activities subtask-remove 43240 --index 0
+rd activities subtask-remove 43240 --index 0     # indexes are zero-based; out-of-range 404s
 ```
 
 ## Blockers
@@ -106,3 +110,6 @@ rd activities history 43240               # audit trail: at  event_type  actor  
   deal/lead/customer/partner/contact; `contact`/`company` are derived from the chosen primary link.
 - `total_logged_minutes` aggregates time entries; `duration_minutes` is the planned duration.
 - Only one exclusive primary link (deal/lead/customer/partner) may be set at a time.
+- `--index` flags are zero-based positions in the current list; re-read the activity after a removal,
+  since removing an item shifts everything after it down one.
+- Time can be credited to a teammate with `--credited-user`, but only one inside your organization.

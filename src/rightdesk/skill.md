@@ -55,8 +55,8 @@ Non-interactive: `rd login <token>`, or set `RIGHTDESK_TOKEN` (overrides `~/.net
 | `rd deals merge PRIMARY_ID` | Merge a duplicate deal (**destructive**) | `--duplicate DUP_ID` (required), `--yes` (required) |
 | `rd activities list` | List activities (by due date) | `--done true\|false`, `--type`, `--assigned-to ID`, `--deal`, `--lead`, `--contact`, `--company`, `--customer`, `--partner`, `--due-before`, `--due-after`, `--page N`, `--limit N`, `-j` |
 | `rd activities get ID` | Show one activity (incl. subtasks, blockers, time, running timer) | `-j` |
-| `rd activities create` | Create an activity | `--subject` (required), `--type` (required), `--description`, `--location`, `--due-date`, `--has-time`, `--duration`, `--chargeable-status`, `--assigned-to`, one of `--deal\|--lead\|--contact\|--company\|--customer\|--partner`, `--recurring` `--pattern` `--interval` `--recurrence-end`, `--external-id`, `-j` |
-| `rd activities update ID` | Update an activity | same flags as create, `-j` |
+| `rd activities create` | Create an activity | `--subject` (required), `--type` (required), `--description`, `--location`, `--due-date`, `--has-time`, `--duration`, `--chargeable-status`, `--assigned-to`, one of `--deal\|--lead\|--contact\|--customer\|--partner` (company is derived), `--recurring` `--pattern` `--interval` `--recurrence-end`, `--external-id`, `-j` |
+| `rd activities update ID` | Update an activity | same flags as create (`--external-id` ignored); empty value clears a field, `--no-has-time`/`--no-recurring` unset the booleans, `-j` |
 | `rd activities delete ID` | Delete an activity (**destructive**) | `--yes` (required) |
 | `rd activities done ID` / `reopen ID` | Mark complete / reopen | `-j` |
 | `rd activities add-blocker ID` | Add a blocker | `--note` (required), `-j` |

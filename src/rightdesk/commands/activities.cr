@@ -135,11 +135,15 @@ module RightDesk
 
   # ----- activities writes -----
 
-  # Build an activity attribute hash from the set --flags (only provided fields).
+  # An activity attribute hash built from the flags that were actually given.
   # Shared by activities:create and activities:update. Checklist items and blockers
-  # are managed via their own verbs, not here.
-  def self.activity_body(input : ACON::Input::Interface) : Hash(String, String | Int32 | Bool)
-    body = Hash(String, String | Int32 | Bool).new
+  # are managed via their own verbs, not here; contact/company are derived from the
+  # primary link server-side, so there is no --company flag to set one directly.
+  #
+  # A flag passed with an empty value (`--location ""`) sends an explicit null, which
+  # is how a field gets cleared on update; an omitted flag is left untouched.
+  def self.activity_body(input : ACON::Input::Interface) : Hash(String, String | Int32 | Bool | Nil)
+    body = Hash(String, String | Int32 | Bool | Nil).new
     {
       "subject"           => "subject",
       "type"              => "activity_type",
@@ -154,23 +158,35 @@ module RightDesk
       "deal"              => "deal_id",
       "lead"              => "lead_id",
       "contact"           => "contact_id",
-      "company"           => "company_id",
       "customer"          => "customer_id",
       "partner"           => "partner_id",
     }.each do |opt, field|
-      if v = input.option(opt).to_s.presence
-        body[field] = v
-      end
+      next if (raw = input.option(opt)).nil?
+
+      body[field] = raw.strip.presence
     end
-    if (v = input.option("duration").to_s.presence) && (n = v.to_i?)
-      body["duration_minutes"] = n
+    body["duration_minutes"] = RightDesk.int_option(input, "duration") unless input.option("duration").nil?
+    body["recurrence_interval"] = RightDesk.int_option(input, "interval") unless input.option("interval").nil?
+
+    unless (has_time = flag_pair(input, "has-time", "no-has-time")).nil?
+      body["has_time"] = has_time
     end
-    if (v = input.option("interval").to_s.presence) && (n = v.to_i?)
-      body["recurrence_interval"] = n
+    unless (recurring = flag_pair(input, "recurring", "no-recurring")).nil?
+      body["is_recurring"] = recurring
     end
-    body["has_time"] = true if input.option("has-time", Bool)
-    body["is_recurring"] = true if input.option("recurring", Bool)
     body
+  end
+
+  # Resolves a boolean from a `--x` / `--no-x` pair: true, false, or nil when
+  # neither was given (leave the field alone). Both at once is a usage error.
+  def self.flag_pair(input : ACON::Input::Interface, on : String, off : String) : Bool?
+    set = input.option(on, Bool)
+    unset = input.option(off, Bool)
+    raise UsageError.new("--#{on} and --#{off} are mutually exclusive") if set && unset
+    return true if set
+    return false if unset
+
+    nil
   end
 
   # Shared option set for activities:create / activities:update.
@@ -181,18 +197,19 @@ module RightDesk
     cmd.option("location", nil, ACON::Input::Option::Value[:required], "Location or link")
     cmd.option("due-date", nil, ACON::Input::Option::Value[:required], "Due date (YYYY-MM-DD or ISO8601)")
     cmd.option("has-time", nil, ACON::Input::Option::Value[:none], "Treat --due-date as carrying a time-of-day")
+    cmd.option("no-has-time", nil, ACON::Input::Option::Value[:none], "Clear --has-time (date only)")
     cmd.option("duration", nil, ACON::Input::Option::Value[:required], "Planned duration in minutes")
     cmd.option("chargeable-status", nil, ACON::Input::Option::Value[:required], "standard, chargeable, or charged")
     cmd.option("assigned-to", nil, ACON::Input::Option::Value[:required], "Assignee user ID")
     cmd.option("external-id", nil, ACON::Input::Option::Value[:required], "External record ID (idempotency key)")
     cmd.option("recurring", nil, ACON::Input::Option::Value[:none], "Mark as recurring (needs --pattern and --due-date)")
+    cmd.option("no-recurring", nil, ACON::Input::Option::Value[:none], "Turn recurrence off")
     cmd.option("pattern", nil, ACON::Input::Option::Value[:required], "Recurrence pattern: daily/weekly/monthly/yearly")
     cmd.option("interval", nil, ACON::Input::Option::Value[:required], "Recurrence interval (>0)")
     cmd.option("recurrence-end", nil, ACON::Input::Option::Value[:required], "Recurrence end date (YYYY-MM-DD)")
     cmd.option("deal", nil, ACON::Input::Option::Value[:required], "Link to deal ID")
     cmd.option("lead", nil, ACON::Input::Option::Value[:required], "Link to lead ID")
     cmd.option("contact", nil, ACON::Input::Option::Value[:required], "Link to contact ID")
-    cmd.option("company", nil, ACON::Input::Option::Value[:required], "Link to company ID")
     cmd.option("customer", nil, ACON::Input::Option::Value[:required], "Link to customer ID")
     cmd.option("partner", nil, ACON::Input::Option::Value[:required], "Link to partner ID")
   end
@@ -238,15 +255,15 @@ module RightDesk
 
     protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
       body = RightDesk.activity_body(input)
-      unless body.has_key?("subject") && body.has_key?("activity_type")
-        STDERR.puts "activities:create failed: --subject and --type are required"
-        RightDesk.exit_code = 2
-        return ACON::Command::Status::FAILURE
+      unless body["subject"]? && body["activity_type"]?
+        return RightDesk.usage_fail("activities:create", "--subject and --type are required")
       end
 
       resp = RightDesk::Client.post("/api/v1/activities", {"activity" => body}.to_json)
       return RightDesk.fail("activities:create", resp, json?(input)) unless resp.success?
       RightDesk.print_activity_result(input, output, resp)
+    rescue ex : UsageError
+      RightDesk.usage_fail("activities:create", ex.message.to_s)
     rescue ex
       STDERR.puts "activities:create failed: #{ex.message}"
       RightDesk.exit_code = 1
@@ -268,14 +285,14 @@ module RightDesk
       id = input.argument("id").to_s
       body = RightDesk.activity_body(input)
       if body.empty?
-        STDERR.puts "activities:update failed: provide at least one field to update"
-        RightDesk.exit_code = 2
-        return ACON::Command::Status::FAILURE
+        return RightDesk.usage_fail("activities:update", "provide at least one field to update")
       end
 
       resp = RightDesk::Client.patch("/api/v1/activities/#{URI.encode_path(id)}", {"activity" => body}.to_json)
       return RightDesk.fail("activities:update", resp, json?(input)) unless resp.success?
       RightDesk.print_activity_result(input, output, resp)
+    rescue ex : UsageError
+      RightDesk.usage_fail("activities:update", ex.message.to_s)
     rescue ex
       STDERR.puts "activities:update failed: #{ex.message}"
       RightDesk.exit_code = 1
@@ -296,9 +313,7 @@ module RightDesk
     protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
       id = input.argument("id").to_s
       unless input.option("yes", Bool)
-        STDERR.puts "activities:delete failed: refusing to delete without --yes"
-        RightDesk.exit_code = 2
-        return ACON::Command::Status::FAILURE
+        return RightDesk.usage_fail("activities:delete", "refusing to delete without --yes")
       end
 
       resp = RightDesk::Client.delete("/api/v1/activities/#{URI.encode_path(id)}")
@@ -373,9 +388,7 @@ module RightDesk
       id = input.argument("id").to_s
       note = input.option("note").to_s.presence
       unless note
-        STDERR.puts "activities:add-blocker failed: --note is required"
-        RightDesk.exit_code = 2
-        return ACON::Command::Status::FAILURE
+        return RightDesk.usage_fail("activities:add-blocker", "--note is required")
       end
 
       resp = RightDesk::Client.patch("/api/v1/activities/#{URI.encode_path(id)}/add_blocker", {"blocker_note" => note}.to_json)
@@ -400,16 +413,13 @@ module RightDesk
 
     protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
       id = input.argument("id").to_s
-      idx = input.option("index").to_s.presence
-      unless idx
-        STDERR.puts "activities:remove-blocker failed: --index is required"
-        RightDesk.exit_code = 2
-        return ACON::Command::Status::FAILURE
-      end
+      idx = RightDesk.index_option!(input, "index")
 
-      resp = RightDesk::Client.patch("/api/v1/activities/#{URI.encode_path(id)}/remove_blocker", {"index" => idx.to_i}.to_json)
+      resp = RightDesk::Client.patch("/api/v1/activities/#{URI.encode_path(id)}/remove_blocker", {"index" => idx}.to_json)
       return RightDesk.fail("activities:remove-blocker", resp, json?(input)) unless resp.success?
       RightDesk.print_activity_result(input, output, resp)
+    rescue ex : UsageError
+      RightDesk.usage_fail("activities:remove-blocker", ex.message.to_s)
     rescue ex
       STDERR.puts "activities:remove-blocker failed: #{ex.message}"
       RightDesk.exit_code = 1
@@ -431,9 +441,7 @@ module RightDesk
       id = input.argument("id").to_s
       text = input.option("text").to_s.presence
       unless text
-        STDERR.puts "activities:subtask-add failed: --text is required"
-        RightDesk.exit_code = 2
-        return ACON::Command::Status::FAILURE
+        return RightDesk.usage_fail("activities:subtask-add", "--text is required")
       end
 
       resp = RightDesk::Client.patch("/api/v1/activities/#{URI.encode_path(id)}/add_checklist_item", {"text" => text}.to_json)
@@ -458,16 +466,13 @@ module RightDesk
 
     protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
       id = input.argument("id").to_s
-      idx = input.option("index").to_s.presence
-      unless idx
-        STDERR.puts "activities:subtask-toggle failed: --index is required"
-        RightDesk.exit_code = 2
-        return ACON::Command::Status::FAILURE
-      end
+      idx = RightDesk.index_option!(input, "index")
 
-      resp = RightDesk::Client.patch("/api/v1/activities/#{URI.encode_path(id)}/toggle_checklist_item", {"index" => idx.to_i}.to_json)
+      resp = RightDesk::Client.patch("/api/v1/activities/#{URI.encode_path(id)}/toggle_checklist_item", {"index" => idx}.to_json)
       return RightDesk.fail("activities:subtask-toggle", resp, json?(input)) unless resp.success?
       RightDesk.print_activity_result(input, output, resp)
+    rescue ex : UsageError
+      RightDesk.usage_fail("activities:subtask-toggle", ex.message.to_s)
     rescue ex
       STDERR.puts "activities:subtask-toggle failed: #{ex.message}"
       RightDesk.exit_code = 1
@@ -487,16 +492,13 @@ module RightDesk
 
     protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
       id = input.argument("id").to_s
-      idx = input.option("index").to_s.presence
-      unless idx
-        STDERR.puts "activities:subtask-remove failed: --index is required"
-        RightDesk.exit_code = 2
-        return ACON::Command::Status::FAILURE
-      end
+      idx = RightDesk.index_option!(input, "index")
 
-      resp = RightDesk::Client.patch("/api/v1/activities/#{URI.encode_path(id)}/remove_checklist_item", {"index" => idx.to_i}.to_json)
+      resp = RightDesk::Client.patch("/api/v1/activities/#{URI.encode_path(id)}/remove_checklist_item", {"index" => idx}.to_json)
       return RightDesk.fail("activities:subtask-remove", resp, json?(input)) unless resp.success?
       RightDesk.print_activity_result(input, output, resp)
+    rescue ex : UsageError
+      RightDesk.usage_fail("activities:subtask-remove", ex.message.to_s)
     rescue ex
       STDERR.puts "activities:subtask-remove failed: #{ex.message}"
       RightDesk.exit_code = 1
@@ -580,14 +582,9 @@ module RightDesk
 
     protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
       id = input.argument("id").to_s
-      minutes = input.option("minutes").to_s.presence
-      unless minutes
-        STDERR.puts "activities:log-time failed: --minutes is required"
-        RightDesk.exit_code = 2
-        return ACON::Command::Status::FAILURE
-      end
+      minutes = RightDesk.int_option!(input, "minutes")
 
-      body = Hash(String, String).new
+      body = Hash(String, String | Int32).new
       body["minutes"] = minutes
       body["note"] = input.option("note").to_s.presence.to_s if input.option("note").to_s.presence
       body["credited_user_id"] = input.option("credited-user").to_s.presence.to_s if input.option("credited-user").to_s.presence
@@ -603,6 +600,8 @@ module RightDesk
         output.puts "logged #{minutes} min — #{total} minutes total"
       end
       ACON::Command::Status::SUCCESS
+    rescue ex : UsageError
+      RightDesk.usage_fail("activities:log-time", ex.message.to_s)
     rescue ex
       STDERR.puts "activities:log-time failed: #{ex.message}"
       RightDesk.exit_code = 1
@@ -626,16 +625,13 @@ module RightDesk
 
     protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
       id = input.argument("id").to_s
-      entry = input.option("entry").to_s.presence
-      unless entry
-        STDERR.puts "activities:edit-time failed: --entry is required"
-        RightDesk.exit_code = 2
-        return ACON::Command::Status::FAILURE
-      end
+      entry = RightDesk.int_option!(input, "entry")
 
-      body = Hash(String, String).new
+      body = Hash(String, String | Int32).new
       body["entry_id"] = entry
-      body["minutes"] = input.option("minutes").to_s.presence.to_s if input.option("minutes").to_s.presence
+      if minutes = RightDesk.int_option(input, "minutes")
+        body["minutes"] = minutes
+      end
       body["note"] = input.option("note").to_s.presence.to_s if input.option("note").to_s.presence
       body["credited_user_id"] = input.option("credited-user").to_s.presence.to_s if input.option("credited-user").to_s.presence
       body["worked_on"] = input.option("worked-on").to_s.presence.to_s if input.option("worked-on").to_s.presence
@@ -643,6 +639,8 @@ module RightDesk
       resp = RightDesk::Client.patch("/api/v1/activities/#{URI.encode_path(id)}/update_time_entry", body.to_json)
       return RightDesk.fail("activities:edit-time", resp, json?(input)) unless resp.success?
       RightDesk.print_activity_result(input, output, resp)
+    rescue ex : UsageError
+      RightDesk.usage_fail("activities:edit-time", ex.message.to_s)
     rescue ex
       STDERR.puts "activities:edit-time failed: #{ex.message}"
       RightDesk.exit_code = 1
@@ -662,17 +660,14 @@ module RightDesk
 
     protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
       id = input.argument("id").to_s
-      entry = input.option("entry").to_s.presence
-      unless entry
-        STDERR.puts "activities:remove-time failed: --entry is required"
-        RightDesk.exit_code = 2
-        return ACON::Command::Status::FAILURE
-      end
+      entry = RightDesk.int_option!(input, "entry")
 
-      query = URI::Params.build { |form| form.add("entry_id", entry) }
+      query = URI::Params.build { |form| form.add("entry_id", entry.to_s) }
       resp = RightDesk::Client.delete("/api/v1/activities/#{URI.encode_path(id)}/remove_time_entry?#{query}")
       return RightDesk.fail("activities:remove-time", resp, json?(input)) unless resp.success?
       RightDesk.print_activity_result(input, output, resp)
+    rescue ex : UsageError
+      RightDesk.usage_fail("activities:remove-time", ex.message.to_s)
     rescue ex
       STDERR.puts "activities:remove-time failed: #{ex.message}"
       RightDesk.exit_code = 1
@@ -694,9 +689,7 @@ module RightDesk
       id = input.argument("id").to_s
       text = input.option("body").to_s.presence
       unless text
-        STDERR.puts "activities:comment failed: --body is required"
-        RightDesk.exit_code = 2
-        return ACON::Command::Status::FAILURE
+        return RightDesk.usage_fail("activities:comment", "--body is required")
       end
 
       resp = RightDesk::Client.post("/api/v1/activities/#{URI.encode_path(id)}/comments", {"comment" => {"body" => text}}.to_json)
