@@ -93,7 +93,11 @@ module RightDesk
     elsif resp.status == 401
       STDERR.puts "#{label} failed: not authenticated (HTTP 401). Run `rd login`."
     else
-      STDERR.puts "#{label} failed: HTTP #{resp.status} — #{resp.body}"
+      # Prefer the JSON `error` field; otherwise show the raw body, truncated so a
+      # non-JSON response (e.g. a server-rendered HTML 500 page) can't flood stderr.
+      detail = (JSON.parse(resp.body)["error"]?.try(&.as_s?) rescue nil) || resp.body
+      detail = "#{detail[0, 500]}… (truncated)" if detail.size > 500
+      STDERR.puts "#{label} failed: HTTP #{resp.status} — #{detail}"
     end
     ACON::Command::Status::FAILURE
   end
