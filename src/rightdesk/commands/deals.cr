@@ -432,4 +432,424 @@ module RightDesk
       ACON::Command::Status::FAILURE
     end
   end
+
+  # ----- deal sub-resources: notes / checklists / events -----
+
+  def self.note_line(n : JSON::Any) : String
+    pin = n["pinned"]?.try(&.as_bool?) ? "📌" : "·"
+    content = (n["content"]?.try(&.as_s?) || "").split("\n").first? || ""
+    author = n["user_name"]?.try(&.as_s?) || ""
+    line = "#{n["id"]?}\t#{pin} #{content}"
+    line += "\t(#{author})" unless author.empty?
+    line
+  end
+
+  def self.print_note_result(input : ACON::Input::Interface, output : ACON::Output::Interface, resp : Client::Response) : ACON::Command::Status
+    if input.option("json", Bool)
+      output.puts resp.body
+    else
+      n = JSON.parse(resp.body)["note"]?
+      output.puts(n ? note_line(n) : resp.body)
+    end
+    ACON::Command::Status::SUCCESS
+  end
+
+  def self.print_checklist(output : ACON::Output::Interface, c : JSON::Any) : Nil
+    name = c["template_name"]?.try(&.as_s?) || "checklist"
+    output.puts "#{c["id"]?}\t#{name} — #{c["completed_count"]?}/#{c["total_count"]?} (#{c["progress_percent"]?}%)"
+    (c["items"]?.try(&.as_a?) || [] of JSON::Any).each do |item|
+      mark = item["completed"]?.try(&.as_bool?) ? "✓" : "○"
+      output.puts "  #{mark} [#{item["id"]?}] #{item["label"]?.try(&.as_s?)}"
+    end
+  end
+
+  def self.print_checklist_result(input : ACON::Input::Interface, output : ACON::Output::Interface, resp : Client::Response) : ACON::Command::Status
+    if input.option("json", Bool)
+      output.puts resp.body
+    else
+      c = JSON.parse(resp.body)["checklist"]?
+      c ? print_checklist(output, c) : output.puts(resp.body)
+    end
+    ACON::Command::Status::SUCCESS
+  end
+
+  # Shared page/limit query builder for the sub-resource list commands.
+  def self.page_params(input : ACON::Input::Interface) : String
+    URI::Params.build do |form|
+      if p = input.option("page").to_s.presence
+        form.add("page", p)
+      end
+      if l = input.option("limit").to_s.presence
+        form.add("per_page", l)
+      end
+    end
+  end
+
+  @[ACONA::AsCommand("deals:notes", description: "List a deal's notes (pinned first)")]
+  class DealsNotesCommand < ACON::Command
+    include JSONOption
+
+    protected def configure : Nil
+      DealsNotesCommand.add_json_option(self)
+      self.argument("id", :required, "deal ID")
+      self.option("page", nil, ACON::Input::Option::Value[:required], "Page number (default 1)")
+      self.option("limit", nil, ACON::Input::Option::Value[:required], "Results per page (max 100)")
+    end
+
+    protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
+      id = input.argument("id").to_s
+      resp = RightDesk::Client.get("/api/v1/deals/#{URI.encode_path(id)}/notes", RightDesk.page_params(input))
+      return RightDesk.fail("deals:notes", resp, json?(input)) unless resp.success?
+
+      if json?(input)
+        output.puts resp.body
+        return ACON::Command::Status::SUCCESS
+      end
+      parsed = JSON.parse(resp.body)
+      (parsed["notes"]?.try(&.as_a?) || [] of JSON::Any).each { |n| output.puts RightDesk.note_line(n) }
+      ACON::Command::Status::SUCCESS
+    rescue ex
+      STDERR.puts "deals:notes failed: #{ex.message}"
+      RightDesk.exit_code = 1
+      ACON::Command::Status::FAILURE
+    end
+  end
+
+  @[ACONA::AsCommand("deals:note-add", description: "Add a note to a deal")]
+  class DealsNoteAddCommand < ACON::Command
+    include JSONOption
+
+    protected def configure : Nil
+      DealsNoteAddCommand.add_json_option(self)
+      self.argument("id", :required, "deal ID")
+      self.option("body", nil, ACON::Input::Option::Value[:required], "Note body (required)")
+      self.option("pin", nil, ACON::Input::Option::Value[:none], "Pin the note to the top")
+      self.option("external-id", nil, ACON::Input::Option::Value[:required], "External record ID (idempotency key)")
+    end
+
+    protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
+      id = input.argument("id").to_s
+      content = input.option("body").to_s.presence
+      return RightDesk.usage_fail("deals:note-add", "--body is required") unless content
+
+      note = Hash(String, String | Bool).new
+      note["content"] = content
+      note["pinned"] = true if input.option("pin", Bool)
+      if ext = input.option("external-id").to_s.presence
+        note["external_record_id"] = ext
+      end
+
+      resp = RightDesk::Client.post("/api/v1/deals/#{URI.encode_path(id)}/notes", {"note" => note}.to_json)
+      return RightDesk.fail("deals:note-add", resp, json?(input)) unless resp.success?
+      RightDesk.print_note_result(input, output, resp)
+    rescue ex
+      STDERR.puts "deals:note-add failed: #{ex.message}"
+      RightDesk.exit_code = 1
+      ACON::Command::Status::FAILURE
+    end
+  end
+
+  @[ACONA::AsCommand("deals:note-edit", description: "Edit a note's body and/or pin state")]
+  class DealsNoteEditCommand < ACON::Command
+    include JSONOption
+
+    protected def configure : Nil
+      DealsNoteEditCommand.add_json_option(self)
+      self.argument("id", :required, "note ID")
+      self.option("body", nil, ACON::Input::Option::Value[:required], "New note body")
+      self.option("pin", nil, ACON::Input::Option::Value[:none], "Pin the note")
+      self.option("unpin", nil, ACON::Input::Option::Value[:none], "Unpin the note")
+    end
+
+    protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
+      id = input.argument("id").to_s
+      note = Hash(String, String | Bool).new
+      if body = input.option("body").to_s.presence
+        note["content"] = body
+      end
+      unless (pin = RightDesk.flag_pair(input, "pin", "unpin")).nil?
+        note["pinned"] = pin
+      end
+      return RightDesk.usage_fail("deals:note-edit", "provide --body and/or --pin/--unpin") if note.empty?
+
+      resp = RightDesk::Client.patch("/api/v1/notes/#{URI.encode_path(id)}", {"note" => note}.to_json)
+      return RightDesk.fail("deals:note-edit", resp, json?(input)) unless resp.success?
+      RightDesk.print_note_result(input, output, resp)
+    rescue ex : UsageError
+      RightDesk.usage_fail("deals:note-edit", ex.message.to_s)
+    rescue ex
+      STDERR.puts "deals:note-edit failed: #{ex.message}"
+      RightDesk.exit_code = 1
+      ACON::Command::Status::FAILURE
+    end
+  end
+
+  @[ACONA::AsCommand("deals:note-delete", description: "Delete a note by ID (requires --yes)")]
+  class DealsNoteDeleteCommand < ACON::Command
+    include JSONOption
+
+    protected def configure : Nil
+      DealsNoteDeleteCommand.add_json_option(self)
+      self.argument("id", :required, "note ID")
+      self.option("yes", "y", ACON::Input::Option::Value[:none], "Confirm deletion (required)")
+    end
+
+    protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
+      id = input.argument("id").to_s
+      return RightDesk.usage_fail("deals:note-delete", "refusing to delete without --yes") unless input.option("yes", Bool)
+
+      resp = RightDesk::Client.delete("/api/v1/notes/#{URI.encode_path(id)}")
+      return RightDesk.fail("deals:note-delete", resp, json?(input)) unless resp.success?
+      if json?(input)
+        output.puts({"id" => id, "deleted" => true}.to_json)
+      else
+        output.puts "deleted note #{id}"
+      end
+      ACON::Command::Status::SUCCESS
+    rescue ex
+      STDERR.puts "deals:note-delete failed: #{ex.message}"
+      RightDesk.exit_code = 1
+      ACON::Command::Status::FAILURE
+    end
+  end
+
+  @[ACONA::AsCommand("deals:checklist-templates", description: "List available checklist templates")]
+  class DealsChecklistTemplatesCommand < ACON::Command
+    include JSONOption
+
+    protected def configure : Nil
+      DealsChecklistTemplatesCommand.add_json_option(self)
+      self.option("page", nil, ACON::Input::Option::Value[:required], "Page number (default 1)")
+      self.option("limit", nil, ACON::Input::Option::Value[:required], "Results per page (max 100)")
+    end
+
+    protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
+      resp = RightDesk::Client.get("/api/v1/checklist_templates", RightDesk.page_params(input))
+      return RightDesk.fail("deals:checklist-templates", resp, json?(input)) unless resp.success?
+
+      if json?(input)
+        output.puts resp.body
+        return ACON::Command::Status::SUCCESS
+      end
+      (JSON.parse(resp.body)["checklist_templates"]?.try(&.as_a?) || [] of JSON::Any).each do |t|
+        count = t["items"]?.try(&.as_a?.try(&.size)) || 0
+        output.puts "#{t["id"]?}\t#{t["name"]?.try(&.as_s?)} (#{count} items)"
+      end
+      ACON::Command::Status::SUCCESS
+    rescue ex
+      STDERR.puts "deals:checklist-templates failed: #{ex.message}"
+      RightDesk.exit_code = 1
+      ACON::Command::Status::FAILURE
+    end
+  end
+
+  @[ACONA::AsCommand("deals:checklists", description: "List a deal's checklists and items")]
+  class DealsChecklistsCommand < ACON::Command
+    include JSONOption
+
+    protected def configure : Nil
+      DealsChecklistsCommand.add_json_option(self)
+      self.argument("id", :required, "deal ID")
+    end
+
+    protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
+      id = input.argument("id").to_s
+      resp = RightDesk::Client.get("/api/v1/deals/#{URI.encode_path(id)}/checklists")
+      return RightDesk.fail("deals:checklists", resp, json?(input)) unless resp.success?
+
+      if json?(input)
+        output.puts resp.body
+        return ACON::Command::Status::SUCCESS
+      end
+      (JSON.parse(resp.body)["checklists"]?.try(&.as_a?) || [] of JSON::Any).each { |c| RightDesk.print_checklist(output, c) }
+      ACON::Command::Status::SUCCESS
+    rescue ex
+      STDERR.puts "deals:checklists failed: #{ex.message}"
+      RightDesk.exit_code = 1
+      ACON::Command::Status::FAILURE
+    end
+  end
+
+  @[ACONA::AsCommand("deals:checklist-add", description: "Apply a checklist template to a deal")]
+  class DealsChecklistAddCommand < ACON::Command
+    include JSONOption
+
+    protected def configure : Nil
+      DealsChecklistAddCommand.add_json_option(self)
+      self.argument("id", :required, "deal ID")
+      self.option("template", nil, ACON::Input::Option::Value[:required], "Checklist template ID (required)")
+    end
+
+    protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
+      id = input.argument("id").to_s
+      template = input.option("template").to_s.presence
+      return RightDesk.usage_fail("deals:checklist-add", "--template ID is required") unless template
+
+      resp = RightDesk::Client.post("/api/v1/deals/#{URI.encode_path(id)}/checklists", {"checklist_template_id" => template}.to_json)
+      return RightDesk.fail("deals:checklist-add", resp, json?(input)) unless resp.success?
+      RightDesk.print_checklist_result(input, output, resp)
+    rescue ex
+      STDERR.puts "deals:checklist-add failed: #{ex.message}"
+      RightDesk.exit_code = 1
+      ACON::Command::Status::FAILURE
+    end
+  end
+
+  @[ACONA::AsCommand("deals:checklist-remove", description: "Remove a checklist from a deal (requires --yes)")]
+  class DealsChecklistRemoveCommand < ACON::Command
+    include JSONOption
+
+    protected def configure : Nil
+      DealsChecklistRemoveCommand.add_json_option(self)
+      self.argument("id", :required, "deal checklist ID")
+      self.option("yes", "y", ACON::Input::Option::Value[:none], "Confirm removal (required)")
+    end
+
+    protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
+      id = input.argument("id").to_s
+      return RightDesk.usage_fail("deals:checklist-remove", "refusing to remove without --yes") unless input.option("yes", Bool)
+
+      resp = RightDesk::Client.delete("/api/v1/deal_checklists/#{URI.encode_path(id)}")
+      return RightDesk.fail("deals:checklist-remove", resp, json?(input)) unless resp.success?
+      if json?(input)
+        output.puts({"id" => id, "removed" => true}.to_json)
+      else
+        output.puts "removed checklist #{id}"
+      end
+      ACON::Command::Status::SUCCESS
+    rescue ex
+      STDERR.puts "deals:checklist-remove failed: #{ex.message}"
+      RightDesk.exit_code = 1
+      ACON::Command::Status::FAILURE
+    end
+  end
+
+  @[ACONA::AsCommand("deals:checklist-check", description: "Mark a checklist item done")]
+  class DealsChecklistCheckCommand < ACON::Command
+    include JSONOption
+
+    protected def configure : Nil
+      DealsChecklistCheckCommand.add_json_option(self)
+      self.argument("id", :required, "checklist item ID")
+    end
+
+    protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
+      id = input.argument("id").to_s
+      resp = RightDesk::Client.patch("/api/v1/deal_checklist_items/#{URI.encode_path(id)}", {"completed" => true}.to_json)
+      return RightDesk.fail("deals:checklist-check", resp, json?(input)) unless resp.success?
+      RightDesk.print_checklist_result(input, output, resp)
+    rescue ex
+      STDERR.puts "deals:checklist-check failed: #{ex.message}"
+      RightDesk.exit_code = 1
+      ACON::Command::Status::FAILURE
+    end
+  end
+
+  @[ACONA::AsCommand("deals:checklist-uncheck", description: "Mark a checklist item not done")]
+  class DealsChecklistUncheckCommand < ACON::Command
+    include JSONOption
+
+    protected def configure : Nil
+      DealsChecklistUncheckCommand.add_json_option(self)
+      self.argument("id", :required, "checklist item ID")
+    end
+
+    protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
+      id = input.argument("id").to_s
+      resp = RightDesk::Client.patch("/api/v1/deal_checklist_items/#{URI.encode_path(id)}", {"completed" => false}.to_json)
+      return RightDesk.fail("deals:checklist-uncheck", resp, json?(input)) unless resp.success?
+      RightDesk.print_checklist_result(input, output, resp)
+    rescue ex
+      STDERR.puts "deals:checklist-uncheck failed: #{ex.message}"
+      RightDesk.exit_code = 1
+      ACON::Command::Status::FAILURE
+    end
+  end
+
+  @[ACONA::AsCommand("deals:events", description: "List a deal's events (history)")]
+  class DealsEventsCommand < ACON::Command
+    include JSONOption
+
+    protected def configure : Nil
+      DealsEventsCommand.add_json_option(self)
+      self.argument("id", :required, "deal ID")
+      self.option("type", nil, ACON::Input::Option::Value[:required], "Filter by event type")
+      self.option("page", nil, ACON::Input::Option::Value[:required], "Page number (default 1)")
+      self.option("limit", nil, ACON::Input::Option::Value[:required], "Results per page (max 100)")
+    end
+
+    protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
+      id = input.argument("id").to_s
+      params = URI::Params.build do |form|
+        if t = input.option("type").to_s.presence
+          form.add("event_type", t)
+        end
+        if p = input.option("page").to_s.presence
+          form.add("page", p)
+        end
+        if l = input.option("limit").to_s.presence
+          form.add("per_page", l)
+        end
+      end
+
+      resp = RightDesk::Client.get("/api/v1/deals/#{URI.encode_path(id)}/events", params)
+      return RightDesk.fail("deals:events", resp, json?(input)) unless resp.success?
+
+      if json?(input)
+        output.puts resp.body
+        return ACON::Command::Status::SUCCESS
+      end
+      (JSON.parse(resp.body)["events"]?.try(&.as_a?) || [] of JSON::Any).each do |e|
+        at = e["occurred_at"]?.try(&.as_s?) || ""
+        type = e["event_type"]?.try(&.as_s?) || "?"
+        desc = e["description"]?.try(&.as_s?) || ""
+        line = "#{at}\t#{type}"
+        line += "\t#{desc}" unless desc.empty?
+        output.puts line
+      end
+      ACON::Command::Status::SUCCESS
+    rescue ex
+      STDERR.puts "deals:events failed: #{ex.message}"
+      RightDesk.exit_code = 1
+      ACON::Command::Status::FAILURE
+    end
+  end
+
+  @[ACONA::AsCommand("deals:event-add", description: "Log an event on a deal")]
+  class DealsEventAddCommand < ACON::Command
+    include JSONOption
+
+    protected def configure : Nil
+      DealsEventAddCommand.add_json_option(self)
+      self.argument("id", :required, "deal ID")
+      self.option("type", nil, ACON::Input::Option::Value[:required], "Event type (required)")
+      self.option("description", nil, ACON::Input::Option::Value[:required], "Event description")
+    end
+
+    protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
+      id = input.argument("id").to_s
+      type = input.option("type").to_s.presence
+      return RightDesk.usage_fail("deals:event-add", "--type is required") unless type
+
+      event = Hash(String, String).new
+      event["event_type"] = type
+      if desc = input.option("description").to_s.presence
+        event["description"] = desc
+      end
+
+      resp = RightDesk::Client.post("/api/v1/deals/#{URI.encode_path(id)}/events", {"event" => event}.to_json)
+      return RightDesk.fail("deals:event-add", resp, json?(input)) unless resp.success?
+      if json?(input)
+        output.puts resp.body
+      else
+        e = JSON.parse(resp.body)["event"]?
+        output.puts(e ? "#{e["id"]?}\t#{e["event_type"]?.try(&.as_s?)}" : resp.body)
+      end
+      ACON::Command::Status::SUCCESS
+    rescue ex
+      STDERR.puts "deals:event-add failed: #{ex.message}"
+      RightDesk.exit_code = 1
+      ACON::Command::Status::FAILURE
+    end
+  end
 end

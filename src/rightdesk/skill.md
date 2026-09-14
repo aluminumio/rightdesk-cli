@@ -53,6 +53,17 @@ Non-interactive: `rd login <token>`, or set `RIGHTDESK_TOKEN` (overrides `~/.net
 | `rd deals reopen ID` | Reopen a closed deal | `-j` |
 | `rd deals convert ID` | Convert to customer/partner (**outward**) | `--to customer\|partner` (required), `--yes` (required) |
 | `rd deals merge PRIMARY_ID` | Merge a duplicate deal (**destructive**) | `--duplicate DUP_ID` (required), `--yes` (required) |
+| `rd deals notes DEAL_ID` | List a deal's notes (pinned first) | `--page N`, `--limit N`, `-j` |
+| `rd deals note-add DEAL_ID` | Add a note to a deal | `--body` (required), `--pin`, `--external-id`, `-j` |
+| `rd deals note-edit NOTE_ID` | Edit a note's body/pin | `--body`, `--pin`\|`--unpin` (≥1), `-j` |
+| `rd deals note-delete NOTE_ID` | Delete a note (**destructive**) | `--yes` (required) |
+| `rd deals checklist-templates` | List available checklist templates | `--page N`, `--limit N`, `-j` |
+| `rd deals checklists DEAL_ID` | List a deal's checklists + items | `-j` |
+| `rd deals checklist-add DEAL_ID` | Apply a checklist template | `--template ID` (required), `-j` |
+| `rd deals checklist-remove CHECKLIST_ID` | Remove a checklist (**destructive**) | `--yes` (required) |
+| `rd deals checklist-check ITEM_ID` / `checklist-uncheck ITEM_ID` | Mark a checklist item done / not done | `-j` |
+| `rd deals events DEAL_ID` | List a deal's events (history) | `--type T`, `--page N`, `--limit N`, `-j` |
+| `rd deals event-add DEAL_ID` | Log an event on a deal | `--type` (required), `--description`, `-j` |
 | `rd activities list` | List activities (by due date) | `--done true\|false`, `--type`, `--assigned-to ID`, `--deal`, `--lead`, `--contact`, `--company`, `--customer`, `--partner`, `--due-before`, `--due-after`, `--page N`, `--limit N`, `-j` |
 | `rd activities get ID` | Show one activity (incl. subtasks, blockers, time, running timer) | `-j` |
 | `rd activities create` | Create an activity | `--subject` (required), `--type` (required), `--description`, `--location`, `--due-date`, `--has-time`, `--duration`, `--chargeable-status`, `--assigned-to`, one of `--deal\|--lead\|--contact\|--customer\|--partner` (company is derived), `--recurring` `--pattern` `--interval` `--recurrence-end`, `--external-id`, `-j` |
