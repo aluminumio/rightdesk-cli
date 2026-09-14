@@ -22,6 +22,9 @@ module RightDesk
     COMMAND_NAMES = %w[
       login logout whoami skills
       deals:list deals:get deals:create deals:update deals:move deals:won deals:lost deals:reopen deals:convert deals:merge
+      deals:notes deals:note-add deals:note-edit deals:note-delete
+      deals:checklist-templates deals:checklists deals:checklist-add deals:checklist-remove deals:checklist-check deals:checklist-uncheck
+      deals:events deals:event-add
       activities:list activities:get activities:create activities:update activities:delete
       activities:done activities:reopen
       activities:add-blocker activities:remove-blocker
@@ -55,6 +58,18 @@ module RightDesk
       app.add DealsReopenCommand.new
       app.add DealsConvertCommand.new
       app.add DealsMergeCommand.new
+      app.add DealsNotesCommand.new
+      app.add DealsNoteAddCommand.new
+      app.add DealsNoteEditCommand.new
+      app.add DealsNoteDeleteCommand.new
+      app.add DealsChecklistTemplatesCommand.new
+      app.add DealsChecklistsCommand.new
+      app.add DealsChecklistAddCommand.new
+      app.add DealsChecklistRemoveCommand.new
+      app.add DealsChecklistCheckCommand.new
+      app.add DealsChecklistUncheckCommand.new
+      app.add DealsEventsCommand.new
+      app.add DealsEventAddCommand.new
       app.add ActivitiesListCommand.new
       app.add ActivitiesGetCommand.new
       app.add ActivitiesCreateCommand.new

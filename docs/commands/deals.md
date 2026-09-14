@@ -79,8 +79,44 @@ the same pipeline first).
 rd deals merge 52375 --duplicate 52380 --yes
 ```
 
+## Notes (attached to a deal)
+
+`Note` bodies are free text. Create/list are deal-scoped; edit/delete/pin address the note by its own id.
+
+```sh
+rd deals note-add 9270 --body "Called Marcus, will follow up" [--pin] [--external-id ext-1]
+rd deals notes 9270                       # pinned first: id  📌|·  body  (author)
+rd deals note-edit 4412 --body "..." [--pin | --unpin]
+rd deals note-delete 4412 --yes           # destructive
+```
+
+- `note-add` is idempotent when `--external-id` is given (re-adding the same id updates, never duplicates).
+- `note-edit` needs at least one of `--body` / `--pin` / `--unpin`; `--pin` and `--unpin` are mutually exclusive.
+
+## Onboarding checklists (template-driven)
+
+Deal checklists come from an org **checklist template** — items are defined on the template, not ad-hoc. (For
+free-form checklists use activity subtasks, `rd activities subtask-add`.)
+
+```sh
+rd deals checklist-templates              # list templates to pick from: id  name (N items)
+rd deals checklist-add 9270 --template 3  # apply a template (items auto-created)
+rd deals checklists 9270                  # each checklist + progress, then ✓|○ [item_id] label
+rd deals checklist-check 5567             # mark an item done   (by item id)
+rd deals checklist-uncheck 5567           # mark it not done
+rd deals checklist-remove 88 --yes        # remove the whole checklist (by deal-checklist id), destructive
+```
+
+## Events (deal history)
+
+```sh
+rd deals event-add 9270 --type call_logged --description "Spoke with Marcus"
+rd deals events 9270 [--type call_logged]  # at  event_type  description
+```
+
 ## Notes
 
 - Exit `2` if a required flag is missing (`--title` on create, `--stage` on move, `--to`/`--yes` on convert,
-  `--duplicate`/`--yes` on merge). Cross-org contact/pipeline → exit `5`.
-- **Not yet:** deal line-items (products) and checklists — a later slice.
+  `--duplicate`/`--yes` on merge, `--body` on note-add, `--template` on checklist-add, `--type` on event-add,
+  `--yes` on the destructive verbs). Cross-org contact/pipeline → exit `5`.
+- **Not yet:** deal line-items (products), files, email/LINE/WhatsApp, signatures, sequences — later slices.

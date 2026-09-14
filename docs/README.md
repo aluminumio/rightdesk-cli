@@ -16,7 +16,7 @@ Three ways to get help at the terminal, always authoritative:
 | auth & session | login, logout, whoami, skills | [auth.md](commands/auth.md) |
 | contacts | list, get, search, create, update, merge | [contacts.md](commands/contacts.md) |
 | companies | list, get, create, update | [companies.md](commands/companies.md) |
-| deals | list, get, create, update, move, won, lost, reopen, convert, merge | [deals.md](commands/deals.md) |
+| deals | list, get, create, update, move, won, lost, reopen, convert, merge, notes, note-add, note-edit, note-delete, checklist-templates, checklists, checklist-add, checklist-remove, checklist-check, checklist-uncheck, events, event-add | [deals.md](commands/deals.md) |
 | activities | list, get, create, update, delete, done, reopen, add-blocker, remove-blocker, subtask-add, subtask-toggle, subtask-remove, start-timer, stop-timer, log-time, edit-time, remove-time, comment, comments, history | [activities.md](commands/activities.md) |
 | pipelines | list, get, create, update, delete | [pipelines.md](commands/pipelines.md) |
 | stages | list, create, update, reorder, delete | [stages.md](commands/stages.md) |
