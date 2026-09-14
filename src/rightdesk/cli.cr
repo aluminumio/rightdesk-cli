@@ -22,7 +22,12 @@ module RightDesk
     COMMAND_NAMES = %w[
       login logout whoami skills
       deals:list deals:get deals:create deals:update deals:move deals:won deals:lost deals:reopen deals:convert deals:merge
-      activities:list activities:get
+      activities:list activities:get activities:create activities:update activities:delete
+      activities:done activities:reopen
+      activities:add-blocker activities:remove-blocker
+      activities:subtask-add activities:subtask-toggle activities:subtask-remove
+      activities:start-timer activities:stop-timer activities:log-time activities:edit-time activities:remove-time
+      activities:comment activities:comments activities:history
       contacts:list contacts:get contacts:search contacts:create contacts:update contacts:merge
       companies:list companies:get companies:create companies:update
       customers:list customers:get customers:create customers:update customers:timeline
@@ -52,6 +57,24 @@ module RightDesk
       app.add DealsMergeCommand.new
       app.add ActivitiesListCommand.new
       app.add ActivitiesGetCommand.new
+      app.add ActivitiesCreateCommand.new
+      app.add ActivitiesUpdateCommand.new
+      app.add ActivitiesDeleteCommand.new
+      app.add ActivitiesDoneCommand.new
+      app.add ActivitiesReopenCommand.new
+      app.add ActivitiesAddBlockerCommand.new
+      app.add ActivitiesRemoveBlockerCommand.new
+      app.add ActivitiesSubtaskAddCommand.new
+      app.add ActivitiesSubtaskToggleCommand.new
+      app.add ActivitiesSubtaskRemoveCommand.new
+      app.add ActivitiesStartTimerCommand.new
+      app.add ActivitiesStopTimerCommand.new
+      app.add ActivitiesLogTimeCommand.new
+      app.add ActivitiesEditTimeCommand.new
+      app.add ActivitiesRemoveTimeCommand.new
+      app.add ActivitiesCommentCommand.new
+      app.add ActivitiesCommentsCommand.new
+      app.add ActivitiesHistoryCommand.new
       app.add ContactsListCommand.new
       app.add ContactsSearchCommand.new
       app.add ContactsGetCommand.new

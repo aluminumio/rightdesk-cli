@@ -1,10 +1,12 @@
 # rd activities
 
-Activities (calls, meetings, tasks, emails, deadlines) attached to CRM records. Part of LeadDrive.
-**Read-only** for now — writes (create / mark done / timers) are a later slice. Run
-`rd activities <verb> --help` for exhaustive flags.
+Activities (calls, meetings, tasks, emails, deadlines) attached to CRM records — the sales team's daily
+task surface. Full read/write parity with the web activity detail page: core fields, subtasks, blockers,
+time tracking, comments, and history. Run `rd activities <verb> --help` for exhaustive flags.
 
-## `rd activities list [-j]`
+## Reads
+
+### `rd activities list [-j]`
 
 List activities, ordered by due date. Each line shows `id  ✓|○ subject (type)  → linked-record`.
 
@@ -20,20 +22,94 @@ List activities, ordered by due date. Each line shows `id  ✓|○ subject (type
 ```sh
 rd activities list --done false --assigned-to 1
 rd activities list --deal 52375
-rd activities list --due-before 2026-10-01 -j | jq -r '.activities[].subject'
 ```
 
-## `rd activities get ID [-j]`
+### `rd activities get ID [-j]`
 
 Show one activity — subject, type, done, due date, duration + logged minutes, assignee, and the linked
-record (`primary_link_type` / `primary_link_name`).
+record. Under `-j` the payload also carries `checklist_items`, `blockers`, recurrence fields,
+`running_timer`, `time_entries`, and `comments_count`.
+
+## Core writes
+
+### `rd activities create [-j]`
+
+Create an activity. `--subject` and `--type` are required.
+
+| Flag | Purpose |
+|---|---|
+| `--subject` (required) | subject line |
+| `--type` (required) | call/meeting/email/task/deadline or an org-custom type |
+| `--description` | notes body |
+| `--location` | location or link |
+| `--due-date` | `YYYY-MM-DD` or ISO8601 |
+| `--has-time` / `--no-has-time` | treat `--due-date` as carrying a time-of-day, or clear that |
+| `--duration` | planned duration in minutes |
+| `--chargeable-status` | standard / chargeable / charged |
+| `--assigned-to ID` | assignee user (defaults to you) |
+| `--deal` `--lead` `--contact` `--customer` `--partner` | the primary link — one only; `contact`/`company` are then derived server-side, so there is no `--company` flag |
+| `--recurring` + `--pattern` + `--interval` + `--recurrence-end` | recurrence (needs `--pattern` and `--due-date`); `--no-recurring` turns it off |
+| `--external-id` | idempotency key — re-creating with the same id upserts, never duplicates (create only; `update` ignores it) |
 
 ```sh
-rd activities get 43240
+rd activities create --subject "Call ACME" --type call --deal 52375 --due-date 2026-10-01
+rd activities create --subject "Weekly sync" --type meeting --recurring --pattern weekly --interval 1 --due-date 2026-10-01
+```
+
+### `rd activities update ID [-j]`
+
+Same flags as create, all optional — provide at least one. Pass a flag an empty value to **clear**
+that field (`--location ""` sends null); omitting a flag leaves the field untouched. `--external-id`
+is ignored here: the idempotency key is fixed at creation.
+
+### `rd activities delete ID --yes` — **destructive**, requires `--yes`.
+
+### `rd activities done ID` / `rd activities reopen ID`
+Mark complete / reopen. Completing a recurring activity spawns its next occurrence server-side.
+
+## Subtasks (checklist)
+
+```sh
+rd activities subtask-add 43240 --text "Draft agenda"
+rd activities subtask-toggle 43240 --index 0     # flip done state
+rd activities subtask-remove 43240 --index 0     # indexes are zero-based; out-of-range 404s
+```
+
+## Blockers
+
+```sh
+rd activities add-blocker 43240 --note "waiting on legal"
+rd activities remove-blocker 43240 --index 0
+```
+
+## Time tracking
+
+Timers are **server-side** — `start-timer` stamps a start time and returns immediately (nothing counts in your
+terminal); `stop-timer` computes the elapsed minutes whenever you run it, from any machine. Check elapsed time
+any time with `rd activities get`.
+
+```sh
+rd activities start-timer 43240 --note "prep"
+rd activities stop-timer 43240
+rd activities log-time 43240 --minutes 30 --note "call" [--credited-user ID] [--worked-on 2026-09-14]
+rd activities edit-time 43240 --entry 99 --minutes 45 --note "revised"
+rd activities remove-time 43240 --entry 99
+```
+
+## Comments & history
+
+```sh
+rd activities comment 43240 --body "Left a voicemail, will retry tomorrow"
+rd activities comments 43240              # oldest-first; @mentions notify those users
+rd activities history 43240               # audit trail: at  event_type  actor  summary
 ```
 
 ## Notes
 
 - The subject record is resolved server-side (`primary_link_type`/`primary_link_name`) — one of
-  deal/lead/customer/partner/contact.
+  deal/lead/customer/partner/contact; `contact`/`company` are derived from the chosen primary link.
 - `total_logged_minutes` aggregates time entries; `duration_minutes` is the planned duration.
+- Only one exclusive primary link (deal/lead/customer/partner) may be set at a time.
+- `--index` flags are zero-based positions in the current list; re-read the activity after a removal,
+  since removing an item shifts everything after it down one.
+- Time can be credited to a teammate with `--credited-user`, but only one inside your organization.

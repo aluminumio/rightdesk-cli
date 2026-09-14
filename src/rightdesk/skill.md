@@ -54,7 +54,20 @@ Non-interactive: `rd login <token>`, or set `RIGHTDESK_TOKEN` (overrides `~/.net
 | `rd deals convert ID` | Convert to customer/partner (**outward**) | `--to customer\|partner` (required), `--yes` (required) |
 | `rd deals merge PRIMARY_ID` | Merge a duplicate deal (**destructive**) | `--duplicate DUP_ID` (required), `--yes` (required) |
 | `rd activities list` | List activities (by due date) | `--done true\|false`, `--type`, `--assigned-to ID`, `--deal`, `--lead`, `--contact`, `--company`, `--customer`, `--partner`, `--due-before`, `--due-after`, `--page N`, `--limit N`, `-j` |
-| `rd activities get ID` | Show one activity | `-j` |
+| `rd activities get ID` | Show one activity (incl. subtasks, blockers, time, running timer) | `-j` |
+| `rd activities create` | Create an activity | `--subject` (required), `--type` (required), `--description`, `--location`, `--due-date`, `--has-time`, `--duration`, `--chargeable-status`, `--assigned-to`, one of `--deal\|--lead\|--contact\|--customer\|--partner` (company is derived), `--recurring` `--pattern` `--interval` `--recurrence-end`, `--external-id`, `-j` |
+| `rd activities update ID` | Update an activity | same flags as create (`--external-id` ignored); empty value clears a field, `--no-has-time`/`--no-recurring` unset the booleans, `-j` |
+| `rd activities delete ID` | Delete an activity (**destructive**) | `--yes` (required) |
+| `rd activities done ID` / `reopen ID` | Mark complete / reopen | `-j` |
+| `rd activities add-blocker ID` | Add a blocker | `--note` (required), `-j` |
+| `rd activities remove-blocker ID` | Remove a blocker by index | `--index` (required), `-j` |
+| `rd activities subtask-add ID` | Add a subtask (checklist item) | `--text` (required), `-j` |
+| `rd activities subtask-toggle ID` / `subtask-remove ID` | Toggle/remove a subtask by index | `--index` (required), `-j` |
+| `rd activities start-timer ID` / `stop-timer ID` | Start/stop a server-side timer | `--note` (start only), `-j` |
+| `rd activities log-time ID` | Log time manually | `--minutes` (required), `--note`, `--credited-user`, `--worked-on`, `-j` |
+| `rd activities edit-time ID` / `remove-time ID` | Edit/remove a time entry | `--entry` (required), (edit: `--minutes`, `--note`, `--credited-user`, `--worked-on`), `-j` |
+| `rd activities comment ID` | Add a comment (@mentions notify) | `--body` (required), `-j` |
+| `rd activities comments ID` / `history ID` | List comments / show history | `--page N`, `--limit N`, `-j` |
 | `rd contacts list` | List contacts | `--page N`, `--limit N`, `-j` |
 | `rd contacts search QUERY` | Search contacts (name/email/phone) | `--company ID`, `-j` |
 | `rd contacts get ID` | Show one contact | `-j` |

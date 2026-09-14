@@ -62,7 +62,7 @@ Build small → large; leads/deals/activities are the heavy ones and come after 
 | 6 | customers | new (CRUD) | list/get/create/update/timeline | Medium | — | todo |
 | 7 | partners | new (CRUD) | list/get/create/update/timeline | Medium | customers | todo |
 | 8 | leads | new (CRUD + move/qualify/convert) | list/get/create/update/delete/move/qualify/disqualify/convert | Med-high | companies, pipelines, stages | todo |
-| 9 | activities | new (read-slice first) | list/get (+ writes later) | High | — | todo |
+| 9 | activities | new (full: CRUD + done/blockers/subtasks/time/comments/history) | list/get/create/update/delete/done/reopen/add-blocker/remove-blocker/subtask-add/subtask-toggle/subtask-remove/start-timer/stop-timer/log-time/edit-time/remove-time/comment/comments/history | High | — | Done — full write surface (Rails `feature/api-v1-activities-full`, CLI `feature/activities-full`) |
 | 10 | deals | **extend** (add the rest) | +update/move/won/lost/convert/merge/… (list/get/create exist) | High | contacts, pipelines, stages, products | todo |
 
 ¹ `stages delete` is destructive (`--yes`); if the stage still holds active deals/leads it 409s unless `--transfer-to STAGE_ID` is given, which moves them first (mirrors the web `transfer_and_destroy`; never orphan deals).
