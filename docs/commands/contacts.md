@@ -59,3 +59,8 @@ rd contacts merge 157891 --duplicate 157892 --yes
 
 - Exit `2` if `--email` missing on create, no fields on update, or `--duplicate`/`--yes` missing on merge.
 - Merge validates same-org and rejects self-merge (→ exit `1`, server message on stderr).
+
+## Bulk import
+
+To create contacts from a CSV — with duplicate detection against every person already in the CRM —
+see [`rd contacts import`](imports.md).

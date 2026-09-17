@@ -26,7 +26,8 @@ Non-interactive: `rd login <token>`, or set `RIGHTDESK_TOKEN` (overrides `~/.net
 - **Data on stdout, diagnostics on stderr** — parse stdout only.
 - **`-j`/`--json`** emits the raw JSON payload; under `--json`, errors are structured
   `{"error","code","hint"}` on stderr.
-- **Exit codes:** `0` ok · `1` general · `2` usage · `3` auth · `4` not found · `5` insufficient scope.
+- **Exit codes:** `0` ok · `1` general · `2` usage · `3` auth · `4` not found · `5` insufficient scope ·
+  `130` Ctrl-C while watching an import.
   Branch on these; e.g. exit `3` means run `rd login` and retry.
 
 ## Configuration
@@ -108,6 +109,12 @@ Non-interactive: `rd login <token>`, or set `RIGHTDESK_TOKEN` (overrides `~/.net
 | `rd companies get ID` | Show one company | `-j` |
 | `rd companies create` | Create a company | `--name` (required), `--domain`, `--url`, `--industry`, `--phone`, `--city`, `--country`, `--postal-code`, `--employees`, `--type`, `--description`, `--owner`, `--external-id`, `-j` |
 | `rd companies update ID` | Update a company | same flags as create, `-j` |
+| `rd contacts import` | Import contacts from a CSV | `-f FILE` (required), `--yes` (**required to actually import**), `--no-wait`, `-j` |
+| `rd companies import` | Import companies from a CSV | `-f FILE` (required), `--yes` (**required to actually import**), `--no-wait`, `-j` |
+| `rd imports list` | List CSV imports (newest first) | `--state uploaded\|processing\|finished\|failed`, `--page N`, `--limit N`, `-j` |
+| `rd imports get ID` | Show one import (state, mapping, counts) | `--wait` (watch to completion), `-j` |
+| `rd imports start ID` | Start an uploaded-but-unstarted import | `--wait`, `-j` |
+| `rd imports skipped ID` | Rows the import did not write, and why | `--reason duplicate\|invalid\|blank`, `--page N`, `--limit N`, `-j` |
 | `rd pipelines list` | List pipelines | `-j` |
 | `rd pipelines get ID` | Show a pipeline + stages | `-j` |
 | `rd pipelines create` | Create a pipeline | `--name` (required), `--entity deal\|lead`, `--description`, `--default`, `--position N`, `-j` |
@@ -132,3 +139,10 @@ Non-interactive: `rd login <token>`, or set `RIGHTDESK_TOKEN` (overrides `~/.net
 - **Always pass `-j`** when parsing; the human format is unstable.
 - **Capture IDs immediately** with `jq -r` (e.g. `rd deals list --status open -j | jq -r '.deals[].id'`).
 - **Branch on exit codes**, not on message text. Exit `3` → `rd login` and retry.
+- **Importing takes two steps by design.** `rd contacts import -f f.csv -j` uploads and returns the
+  detected `column_mapping` + `unmapped_columns` without writing anything; inspect it, then re-run with
+  `--yes` (or `rd imports start <id> --wait`). Duplicate rows are reported, never written as new people —
+  a finished import with duplicates still exits `0`; read them with `rd imports skipped <id> -j`.
+- **Under `-j`, a waiting import emits exactly one JSON document** (the final import state) on stdout;
+  the progress bar is suppressed. Exit `130` means the watch was interrupted, not that the import failed —
+  it is still running, so poll `rd imports get <id> -j` instead of re-uploading.
