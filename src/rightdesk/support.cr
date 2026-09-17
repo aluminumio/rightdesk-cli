@@ -267,6 +267,21 @@ module RightDesk
     @@progress_shown = false
   end
 
+  # A monotonic reading, spelled for whichever compiler is building this.
+  #
+  # Crystal 1.21 deprecated Time.monotonic in favour of Time.instant, but CI and the
+  # Linux release build pin 1.13, where Time.instant does not exist -- so neither name
+  # compiles everywhere and `--error-on-warnings` fails on one or the other. Choosing at
+  # compile time keeps both green. No return type: 1.21 hands back a Time::Instant and
+  # 1.13 a Time::Span, and only the difference between two readings has to be a Span.
+  private def self.monotonic_now
+    {% if compare_versions(Crystal::VERSION, "1.21.0") >= 0 %}
+      Time.instant
+    {% else %}
+      Time.monotonic
+    {% end %}
+  end
+
   # Watches one import to a terminal state, rendering progress as it goes. Every exit
   # path comes back as a PollOutcome -- the caller maps it to output and an exit code.
   def self.poll_import(id : String, json : Bool) : PollOutcome
@@ -274,7 +289,7 @@ module RightDesk
     Signal::INT.trap { interrupted = true }
     progress_reset
 
-    started = Time.instant
+    started = monotonic_now
     interval = POLL_FIRST_INTERVAL
     failures = 0
     last_body = nil.as(String?)
@@ -298,7 +313,7 @@ module RightDesk
         failures += 1
       end
 
-      elapsed = (Time.instant - started).total_seconds
+      elapsed = (monotonic_now - started).total_seconds
       decision = poll_decision(state, elapsed, failures)
       unless decision.continue?
         return finish_poll(decision, last_body, resp.success? ? nil : resp)
