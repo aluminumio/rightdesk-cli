@@ -50,6 +50,12 @@ describe RightDesk::CLI do
       ["activities", "log-time", "5", "--minutes", "30"] => ["activities:log-time", "5", "--minutes", "30"],
       ["activities", "comment", "5", "--body", "hi"] => ["activities:comment", "5", "--body", "hi"],
       ["activities", "history", "5"] => ["activities:history", "5"],
+      ["contacts", "import", "-f", "leads.csv"] => ["contacts:import", "-f", "leads.csv"],
+      ["companies", "import", "-f", "co.csv", "--yes"] => ["companies:import", "-f", "co.csv", "--yes"],
+      ["imports", "list"]            => ["imports:list"],
+      ["imports", "get", "5", "--wait"] => ["imports:get", "5", "--wait"],
+      ["imports", "start", "5"]      => ["imports:start", "5"],
+      ["imports", "skipped", "5", "--reason", "duplicate"] => ["imports:skipped", "5", "--reason", "duplicate"],
       ["deals", "list", "--json"]    => ["deals:list", "--json"],
       ["deals", "list", "--status", "open"] => ["deals:list", "--status", "open"],
       ["deals"]                      => ["deals"],          # bare noun → namespace listing
