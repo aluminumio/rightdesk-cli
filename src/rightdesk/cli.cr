@@ -15,6 +15,7 @@ require "./commands/products"
 require "./commands/customers"
 require "./commands/partners"
 require "./commands/leads"
+require "./commands/imports"
 
 module RightDesk
   module CLI
@@ -31,8 +32,9 @@ module RightDesk
       activities:subtask-add activities:subtask-toggle activities:subtask-remove
       activities:start-timer activities:stop-timer activities:log-time activities:edit-time activities:remove-time
       activities:comment activities:comments activities:history
-      contacts:list contacts:get contacts:search contacts:create contacts:update contacts:merge
-      companies:list companies:get companies:create companies:update
+      contacts:list contacts:get contacts:search contacts:create contacts:update contacts:merge contacts:import
+      companies:list companies:get companies:create companies:update companies:import
+      imports:list imports:get imports:start imports:skipped
       customers:list customers:get customers:create customers:update customers:timeline
       partners:list partners:get partners:create partners:update partners:timeline
       pipelines:list pipelines:get pipelines:create pipelines:update pipelines:delete
@@ -136,6 +138,12 @@ module RightDesk
       app.add LeadsQualifyCommand.new
       app.add LeadsDisqualifyCommand.new
       app.add LeadsConvertCommand.new
+      app.add ContactsImportCommand.new
+      app.add CompaniesImportCommand.new
+      app.add ImportsListCommand.new
+      app.add ImportsGetCommand.new
+      app.add ImportsStartCommand.new
+      app.add ImportsSkippedCommand.new
 
       status = app.run(ACON::Input::ARGV.new(preprocess(argv)))
       exit(RightDesk.exit_code? || status.value)
