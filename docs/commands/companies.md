@@ -46,3 +46,7 @@ Update a company — same flags as create (all optional; provide at least one).
 
 - Exit `2` if `--name` is missing on create, or no fields given on update.
 - Missing/other-org IDs → exit `4` (not found).
+
+## Bulk import
+
+To create companies from a CSV, see [`rd companies import`](imports.md).
