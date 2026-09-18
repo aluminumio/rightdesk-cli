@@ -17,7 +17,7 @@ Upload a CSV and import it.
 |---|---|
 | `-f`, `--file FILE` | **required** — the CSV to upload |
 | `--yes` | accept the detected mapping and actually import |
-| `--no-wait` | return as soon as the import starts, instead of watching it |
+| `--no-wait` | return as soon as the import starts, instead of watching it (only with `--yes`) |
 | `-j` | emit the raw JSON payload |
 
 **Without `--yes` nothing is imported.** The column mapping is auto-detected from the header row, and
@@ -29,7 +29,7 @@ mapping detected for leads.csv (18.4 KB)
   Email         ->  email
   First Name    ->  first_name
   Internal ID   ->  (not imported)
-  1 column(s) will not be imported
+  1 column will not be imported
 import 8821 created — nothing imported yet; re-run with --yes, or: rd imports start 8821
 ```
 
@@ -37,7 +37,8 @@ A column shown as `(not imported)` is usually a mis-detected header — checking
 this step exists. Nothing is lost either way: the upload is already stored, so `rd imports start 8821`
 runs it without re-uploading.
 
-With `--yes` it imports and watches to the end, progress on **stderr** and the summary on stdout:
+With `--yes` it starts the import — a second call, so the server can refuse it — and watches to the
+end, progress on **stderr** and the summary on stdout:
 
 ```sh
 $ rd contacts import -f leads.csv --yes
@@ -46,6 +47,24 @@ $ rd contacts import -f leads.csv --yes
 412 rows · 396 imported · 14 duplicate · 2 invalid
 16 rows skipped — see: rd imports skipped 8821
 ```
+
+If the server refuses to start the import, the command says why and exits `1` without waiting:
+
+```sh
+$ rd contacts import -f industries.csv --yes
+mapping detected for industries.csv (2.1 KB)
+  City        ->  city
+  Industry    ->  industry
+contacts:import failed: HTTP 422 — No column is mapped to a field that identifies a record
+  first_name
+  last_name
+  email
+  phone
+```
+
+The file is still uploaded, so nothing is lost — but the mapping cannot be corrected from the CLI. The
+API has no mapping-override endpoint; fix it at `/bulk_item_imports/<id>/mapping` in the web UI, then
+`rd imports start <id>`.
 
 ### Duplicate handling
 
@@ -76,7 +95,8 @@ also how you resume watching after a Ctrl-C.
 ## `rd imports start ID [--wait] [-j]`
 
 Start an import that was uploaded but never run (a `--yes`-less upload). Exit `1` if it has already been
-started, or if its mapping is missing or maps two columns to the same field.
+started, or if its mapping is missing, maps two columns to the same field, or maps nothing that
+identifies a record. `rd contacts import --yes` goes through this same endpoint and fails the same way.
 
 ## `rd imports skipped ID [-j]`
 
@@ -85,7 +105,7 @@ The rows the import did not write, one per line:
 
 | Flag | Purpose |
 |---|---|
-| `--reason R` | `duplicate` \| `invalid` \| `blank` |
+| `--reason R` | `duplicate` \| `invalid` — the only outcomes the server records per row; blank rows are a count only |
 | `--page N` / `--limit N` | pagination (max 100/page) |
 
 ```sh
@@ -98,7 +118,8 @@ summary and this command say so.
 
 ## Notes
 
-- Exit `2` if `--file` is missing or does not point at a file.
+- Exit `2` if `--file` is missing or does not point at a file, if an import id is not a number, or if
+  `--reason` is not `duplicate` or `invalid`.
 - Exit `4` for an unknown or other-org import id.
 - **Exit `130` on Ctrl-C during a wait.** The import keeps running server-side — Ctrl-C stops the
   *watching*, not the import — so a script can tell "I stopped looking" from "the import failed" (`1`).

@@ -68,6 +68,20 @@ module RightDesk
     raw.strip.to_i? || raise UsageError.new("--#{name} must be an integer (got #{raw.inspect})")
   end
 
+  # A record id taken from a positional argument. Ids are numeric everywhere in the API,
+  # and some routes constrain them (`/api/v1/imports/:id` is `\d+`) -- a non-numeric id
+  # there never reaches the controller, so it comes back without the JSON `{error, code}`
+  # body every other failure has, and the raw response gets printed instead. Rejecting it
+  # here turns that into a plain usage error. Separate from `int_option!` because those
+  # messages name a flag, and `--id is required` would be a lie for an argument.
+  def self.id_argument!(input : ACON::Input::Interface, name : String = "id") : String
+    raw = input.argument(name).to_s.strip
+    raise UsageError.new("#{name} is required") if raw.empty?
+    raise UsageError.new("#{name} must be a number (got #{raw.inspect})") unless raw.each_char.all?(&.ascii_number?)
+
+    raw
+  end
+
   # Mixin for data-returning commands. Adds `--json/-j` and exposes `json?(input)`.
   module JSONOption
     macro included

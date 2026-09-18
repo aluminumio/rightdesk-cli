@@ -114,7 +114,7 @@ Non-interactive: `rd login <token>`, or set `RIGHTDESK_TOKEN` (overrides `~/.net
 | `rd imports list` | List CSV imports (newest first) | `--state uploaded\|processing\|finished\|failed`, `--page N`, `--limit N`, `-j` |
 | `rd imports get ID` | Show one import (state, mapping, counts) | `--wait` (watch to completion), `-j` |
 | `rd imports start ID` | Start an uploaded-but-unstarted import | `--wait`, `-j` |
-| `rd imports skipped ID` | Rows the import did not write, and why | `--reason duplicate\|invalid\|blank`, `--page N`, `--limit N`, `-j` |
+| `rd imports skipped ID` | Rows the import did not write, and why | `--reason duplicate\|invalid`, `--page N`, `--limit N`, `-j` |
 | `rd pipelines list` | List pipelines | `-j` |
 | `rd pipelines get ID` | Show a pipeline + stages | `-j` |
 | `rd pipelines create` | Create a pipeline | `--name` (required), `--entity deal\|lead`, `--description`, `--default`, `--position N`, `-j` |
@@ -143,6 +143,9 @@ Non-interactive: `rd login <token>`, or set `RIGHTDESK_TOKEN` (overrides `~/.net
   detected `column_mapping` + `unmapped_columns` without writing anything; inspect it, then re-run with
   `--yes` (or `rd imports start <id> --wait`). Duplicate rows are reported, never written as new people —
   a finished import with duplicates still exits `0`; read them with `rd imports skipped <id> -j`.
+- **A refused start fails immediately**, exit `1` with the server's reason (`no_importable_columns`,
+  `duplicate_column_mapping`, `column_mapping_required`, `import_already_started`) — it never waits. The
+  mapping cannot be changed over the API; correcting one means the web UI.
 - **Under `-j`, a waiting import emits exactly one JSON document** (the final import state) on stdout;
   the progress bar is suppressed. Exit `130` means the watch was interrupted, not that the import failed —
   it is still running, so poll `rd imports get <id> -j` instead of re-uploading.

@@ -14,8 +14,24 @@ module RightDesk
   # and the web UI can never disagree about what a file means.
   #
   # `--yes` is the gate: auto-mapping is a heuristic, so a run without it uploads the
-  # file, prints the mapping, and imports nothing.
-  IMPORT_ITEM_LABELS = {"contact" => "contacts", "company" => "companies"}
+  # file, prints the mapping, and imports nothing. With it, the upload and the start are
+  # still two requests -- only the start can report why the server refused to run it.
+
+  # What `rd imports skipped --reason` can filter on. Blank rows are only a counter --
+  # the server never records them as skipped rows, so it cannot filter on them either.
+  # It ignores an unrecognized reason rather than rejecting it, which would hand back
+  # every row while looking like a filter, so the check belongs here.
+  SKIPPED_REASONS = %w[duplicate invalid]
+
+  def self.skipped_reason(input : ACON::Input::Interface) : String?
+    raw = input.option("reason").to_s.strip
+    return nil if raw.empty?
+    unless SKIPPED_REASONS.includes?(raw)
+      raise UsageError.new("--reason must be one of: #{SKIPPED_REASONS.join(", ")} (got #{raw.inspect})")
+    end
+
+    raw
+  end
 
   # The one-shot: upload, show the mapping, optionally start and watch.
   def self.configure_import_upload(cmd : ACON::Command) : Nil
@@ -34,8 +50,11 @@ module RightDesk
     json = input.option("json", Bool)
     start = input.option("yes", Bool)
 
+    # `import[start]=true` exists server-side but is unusable here: the create call swallows
+    # a refused start and 201s either way, and the payload has no field that separates
+    # "enqueued" from "refused" (state is `uploaded` for both, until a worker picks it up).
+    # So the start is always its own request, where a refusal comes back as 409/422.
     fields = {"import[item_type]" => item_type}
-    fields["import[start]"] = "true" if start
 
     # Streamed from disk rather than read into a String: a 25 MB export would otherwise
     # sit in memory twice over (see Client.post_multipart).
@@ -62,8 +81,13 @@ module RightDesk
 
     print_import_mapping(output, import, path) unless json
 
+    start_resp = Client.post("/api/v1/imports/#{URI.encode_path(id)}/start")
+    return RightDesk.fail(label, start_resp, json) unless start_resp.success?
+
     if input.option("no-wait", Bool)
-      output.puts resp.body if json
+      # The 202, not the 201: under -j the document a script reads must describe the
+      # operation that actually ran.
+      output.puts start_resp.body if json
       output.puts "import #{id} started — watch with: rd imports get #{id} --wait" unless json
       return ACON::Command::Status::SUCCESS
     end
@@ -179,7 +203,7 @@ module RightDesk
     end
 
     (import["warnings"]?.try(&.as_a?) || [] of JSON::Any).each do |warning|
-      STDERR.puts "warning: #{warning.as_s? || warning}" 
+      STDERR.puts "warning: #{warning.as_s? || warning}"
     end
   end
 
@@ -340,7 +364,7 @@ module RightDesk
     end
 
     protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
-      id = input.argument("id").to_s
+      id = RightDesk.id_argument!(input)
       return RightDesk.watch_import(output, "imports:get", id, json?(input)) if input.option("wait", Bool)
 
       resp = RightDesk::Client.get("/api/v1/imports/#{URI.encode_path(id)}")
@@ -364,6 +388,8 @@ module RightDesk
         output.puts "  (truncated — full reason under -j)" if raw.lines.size > 1
       end
       ACON::Command::Status::SUCCESS
+    rescue ex : RightDesk::UsageError
+      RightDesk.usage_fail("imports:get", ex.message || "invalid input")
     rescue ex
       STDERR.puts "imports:get failed: #{ex.message}"
       RightDesk.exit_code = 1
@@ -382,7 +408,7 @@ module RightDesk
     end
 
     protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
-      id = input.argument("id").to_s
+      id = RightDesk.id_argument!(input)
       resp = RightDesk::Client.post("/api/v1/imports/#{URI.encode_path(id)}/start")
       return RightDesk.fail("imports:start", resp, json?(input)) unless resp.success?
 
@@ -394,6 +420,8 @@ module RightDesk
         output.puts "import #{id} started — watch with: rd imports get #{id} --wait"
       end
       ACON::Command::Status::SUCCESS
+    rescue ex : RightDesk::UsageError
+      RightDesk.usage_fail("imports:start", ex.message || "invalid input")
     rescue ex
       STDERR.puts "imports:start failed: #{ex.message}"
       RightDesk.exit_code = 1
@@ -409,15 +437,15 @@ module RightDesk
       ImportsSkippedCommand.add_json_option(self)
       self.argument("id", :required, "import ID")
       self
-        .option("reason", nil, ACON::Input::Option::Value[:required], "Filter by outcome (duplicate|invalid|blank)")
+        .option("reason", nil, ACON::Input::Option::Value[:required], "Filter by outcome (duplicate|invalid)")
         .option("page", nil, ACON::Input::Option::Value[:required], "Page number (default 1)")
         .option("limit", nil, ACON::Input::Option::Value[:required], "Results per page (max 100)")
     end
 
     protected def execute(input : ACON::Input::Interface, output : ACON::Output::Interface) : ACON::Command::Status
-      id = input.argument("id").to_s
+      id = RightDesk.id_argument!(input)
       params = URI::Params.build do |form|
-        if r = input.option("reason").to_s.presence
+        if r = RightDesk.skipped_reason(input)
           form.add("reason", r)
         end
         if p = input.option("page").to_s.presence
@@ -447,6 +475,8 @@ module RightDesk
         STDERR.puts "note: the server stopped recording skipped rows before the end of the file"
       end
       ACON::Command::Status::SUCCESS
+    rescue ex : RightDesk::UsageError
+      RightDesk.usage_fail("imports:skipped", ex.message || "invalid input")
     rescue ex
       STDERR.puts "imports:skipped failed: #{ex.message}"
       RightDesk.exit_code = 1

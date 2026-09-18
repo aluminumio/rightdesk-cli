@@ -1,4 +1,7 @@
 require "./spec_helper"
+require "http/formdata"
+require "http/server"
+require "file_utils"
 
 # Binds real ARGV against the command that carries the upload option set, so the flag
 # rules are exercised the way they are in use.
@@ -7,6 +10,47 @@ private def import_input(args : Array(String)) : ACON::Input::Interface
   input.bind RightDesk::ContactsImportCommand.new.definition
   input.validate
   input
+end
+
+private def imports_input(command : ACON::Command, args : Array(String)) : ACON::Input::Interface
+  input = ACON::Input::ARGV.new(args)
+  input.bind command.definition
+  input.validate
+  input
+end
+
+# Runs `block` against a throwaway server on loopback, with the config env pointed at it
+# and HOME redirected so a real ~/.rightdesk token file can never be read or written.
+# Yields the recorded requests. Mirrors spec/client_multipart_spec.cr.
+private def with_stub_api(handler : Proc(HTTP::Server::Context, Nil), &)
+  requests = [] of {String, String, String}
+
+  server = HTTP::Server.new do |context|
+    requests << {context.request.method, context.request.resource,
+                 context.request.body.try(&.gets_to_end) || ""}
+    handler.call(context)
+  end
+  address = server.bind_tcp("127.0.0.1", 0)
+  spawn { server.listen }
+
+  previous_home = ENV["HOME"]?
+  previous_token = ENV["RIGHTDESK_TOKEN"]?
+  previous_url = ENV["RIGHTDESK_URL"]?
+  tmp_home = File.tempname("rightdesk-imports-spec")
+  Dir.mkdir_p(tmp_home)
+
+  begin
+    ENV["HOME"] = tmp_home
+    ENV["RIGHTDESK_TOKEN"] = "probe-token"
+    ENV["RIGHTDESK_URL"] = "http://127.0.0.1:#{address.port}"
+    yield requests
+  ensure
+    server.close
+    previous_home ? (ENV["HOME"] = previous_home) : ENV.delete("HOME")
+    previous_token ? (ENV["RIGHTDESK_TOKEN"] = previous_token) : ENV.delete("RIGHTDESK_TOKEN")
+    previous_url ? (ENV["RIGHTDESK_URL"] = previous_url) : ENV.delete("RIGHTDESK_URL")
+    FileUtils.rm_rf(tmp_home)
+  end
 end
 
 private def captured(&) : String
@@ -135,6 +179,103 @@ describe "RightDesk.run_import_upload" do
       RightDesk.run_import_upload(import_input(["--file", "/nonexistent/nope.csv"]),
         ACON::Output::IO.new(IO::Memory.new), "contacts:import", "contact")
     end
+  end
+end
+
+describe "RightDesk.id_argument!" do
+  it "takes a numeric id" do
+    RightDesk.id_argument!(imports_input(RightDesk::ImportsGetCommand.new, ["8821"])).should eq("8821")
+  end
+
+  it "trims it" do
+    RightDesk.id_argument!(imports_input(RightDesk::ImportsGetCommand.new, ["8821 "])).should eq("8821")
+  end
+
+  # /api/v1/imports/:id is constrained to \d+, so a non-numeric id never reaches the
+  # controller: it comes back without the JSON error body every other failure has.
+  it "rejects an id the imports route could never match" do
+    %w[abc 12a 88.2].each do |raw|
+      expect_raises(RightDesk::UsageError, /id must be a number/) do
+        RightDesk.id_argument!(imports_input(RightDesk::ImportsGetCommand.new, [raw]))
+      end
+    end
+  end
+
+  it "rejects a blank id" do
+    expect_raises(RightDesk::UsageError, /id is required/) do
+      RightDesk.id_argument!(imports_input(RightDesk::ImportsGetCommand.new, [" "]))
+    end
+  end
+end
+
+describe "RightDesk.skipped_reason" do
+  it "passes through the outcomes the server filters on" do
+    %w[duplicate invalid].each do |reason|
+      input = imports_input(RightDesk::ImportsSkippedCommand.new, ["1", "--reason", reason])
+      RightDesk.skipped_reason(input).should eq(reason)
+    end
+  end
+
+  it "is absent when the flag is" do
+    RightDesk.skipped_reason(imports_input(RightDesk::ImportsSkippedCommand.new, ["1"])).should be_nil
+  end
+
+  # The server ignores an unrecognized reason, which would hand back every skipped row
+  # while reading as a filter. `blank` is the tempting one: it is a count, never a row.
+  it "rejects a reason the server cannot filter on" do
+    input = imports_input(RightDesk::ImportsSkippedCommand.new, ["1", "--reason", "blank"])
+    expect_raises(RightDesk::UsageError, /--reason must be one of: duplicate, invalid/) do
+      RightDesk.skipped_reason(input)
+    end
+  end
+end
+
+describe "RightDesk.run_import_upload with --yes" do
+  # The regression this whole change exists for. Creating with import[start]=true cannot
+  # report a refused start -- the API 201s either way and the payload says `uploaded`
+  # whether the job was queued or refused -- so the CLI used to poll a run that never
+  # began for 15 minutes and then blame the timeout.
+  it "starts in its own request and reports the server's refusal instead of polling" do
+    csv = File.tempname("rd-import-spec", ".csv")
+    File.write(csv, "Industry,City\nSoftware,Tokyo\n")
+
+    handler = ->(context : HTTP::Server::Context) do
+      if context.request.resource.ends_with?("/start")
+        context.response.status_code = 422
+        context.response.print %({"error":"No column is mapped to a field that identifies a record",) +
+                               %("code":"no_importable_columns","details":["first_name","last_name","email","phone"]})
+      else
+        context.response.status_code = 201
+        context.response.print %({"import":{"id":8821,"state":"uploaded","item_type":"contact",) +
+                               %("filename":"rd-import-spec.csv","column_mapping":{"Industry":"industry"},) +
+                               %("unmapped_columns":[]}})
+      end
+      nil
+    end
+
+    RightDesk.exit_code = 0
+
+    status = with_stub_api(handler) do |requests|
+      result = RightDesk.run_import_upload(
+        imports_input(RightDesk::ContactsImportCommand.new, ["--file", csv, "--yes", "--no-wait"]),
+        ACON::Output::IO.new(IO::Memory.new), "contacts:import", "contact")
+
+      # Two POSTs and no GET: the refusal ended it before any polling.
+      requests.size.should eq(2)
+      requests.map { |(method, _, _)| method }.should eq(%w[POST POST])
+      requests[0][1].should eq("/api/v1/imports")
+      requests[1][1].should eq("/api/v1/imports/8821/start")
+      # The field that made the refusal invisible must not be sent at all.
+      requests[0][2].should_not contain("import[start]")
+
+      result
+    end
+
+    status.should eq(ACON::Command::Status::FAILURE)
+    RightDesk.exit_code?.should eq(1)
+  ensure
+    File.delete?(csv) if csv
+    RightDesk.exit_code = 0
   end
 end
 
